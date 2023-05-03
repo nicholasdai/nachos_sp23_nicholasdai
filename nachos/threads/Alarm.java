@@ -1,12 +1,19 @@
 package nachos.threads;
 
 import nachos.machine.*;
+import java.util.LinkedList;
+import java.util.Queue;
 
 /**
  * Uses the hardware timer to provide preemption, and to allow threads to sleep
  * until a certain time.
  */
 public class Alarm {
+	
+	Queue<KThread> queue;
+	Queue<Long> waitTime;
+	int counter;
+	
 	/**
 	 * Allocate a new Alarm. Set the machine's timer interrupt handler to this
 	 * alarm's callback.
@@ -15,6 +22,10 @@ public class Alarm {
 	 * <b>Note</b>: Nachos will not function correctly with more than one alarm.
 	 */
 	public Alarm() {
+
+		queue = new LinkedList<KThread>();
+		waitTime = new LinkedList<Long>();
+
 		Machine.timer().setInterruptHandler(new Runnable() {
 			public void run() {
 				timerInterrupt();
@@ -29,7 +40,19 @@ public class Alarm {
 	 * should be run.
 	 */
 	public void timerInterrupt() {
+
+		long curr = Machine.timer().getTime();
 		KThread.currentThread().yield();
+		for (int i = 0; i < queue.size(); i++) {
+			KThread thread = queue.poll();
+			Long time = waitTime.poll();
+			if (time <= curr) {
+				thread.ready();
+			} else {
+				queue.add(thread);
+				waitTime.add(time);
+			}
+		}
 	}
 
 	/**
@@ -45,10 +68,15 @@ public class Alarm {
 	 * @see nachos.machine.Timer#getTime()
 	 */
 	public void waitUntil(long x) {
-		// for now, cheat just to get something working (busy waiting is bad)
-		long wakeTime = Machine.timer().getTime() + x;
-		while (wakeTime > Machine.timer().getTime())
-			KThread.yield();
+
+		boolean status = Machine.interrupt().disable();
+
+		queue.add(KThread.currentThread());
+		waitTime.add((Long) (x + Machine.timer().getTime()));
+
+		KThread.sleep();
+
+		Machine.interrupt().restore(status);
 	}
 
         /**
@@ -60,7 +88,34 @@ public class Alarm {
 	 * <p>
 	 * @param thread the thread whose timer should be cancelled.
 	 */
-        public boolean cancel(KThread thread) {
-		return false;
+    public boolean cancel(KThread thread) {
+
+		boolean cancel = false;
+
+		for (int i = 0; i < queue.size(); i++) {
+			KThread t = queue.poll();
+			Long time = waitTime.poll();
+			if (t == thread) {
+				t.ready();
+				cancel = true;
+			} else {
+				queue.add(t);
+				waitTime.add(time);
+			}
+		}
+
+		return (cancel == true);
+	}
+
+	public static void alarmTest1() {
+		int durations[] = {1000, 10*1000, 100*1000};
+		long t0, t1;
+	
+		for (int d : durations) {
+			t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (d);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest1: waited for " + (t1 - t0) + " ticks");
+		}
 	}
 }
